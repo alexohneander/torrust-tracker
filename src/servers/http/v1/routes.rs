@@ -9,6 +9,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::{BoxError, Router};
 use axum_client_ip::SecureClientIpSource;
+use axum_prometheus::PrometheusMetricLayer;
 use hyper::{Request, StatusCode};
 use torrust_tracker_configuration::DEFAULT_TIMEOUT;
 use tower::timeout::TimeoutLayer;
@@ -30,6 +31,8 @@ use crate::servers::http::HTTP_TRACKER_LOG_TARGET;
 #[allow(clippy::needless_pass_by_value)]
 #[instrument(skip(tracker, server_socket_addr))]
 pub fn router(tracker: Arc<Tracker>, server_socket_addr: SocketAddr) -> Router {
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
     Router::new()
         // Health check
         .route("/health_check", get(health_check::handler))
@@ -39,6 +42,8 @@ pub fn router(tracker: Arc<Tracker>, server_socket_addr: SocketAddr) -> Router {
         // Scrape request
         .route("/scrape", get(scrape::handle_without_key).with_state(tracker.clone()))
         .route("/scrape/:key", get(scrape::handle_with_key).with_state(tracker))
+        .route("/metrics", get(|| async move { metric_handle.render() }))
+        .layer(prometheus_layer)
         // Add extension to get the client IP from the connection info
         .layer(SecureClientIpSource::ConnectInfo.into_extension())
         .layer(CompressionLayer::new())
